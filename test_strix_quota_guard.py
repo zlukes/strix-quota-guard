@@ -22,8 +22,8 @@ class FetchTests(unittest.TestCase):
             auth = Path(temp) / 'auth.json'
             auth.write_text(json.dumps({'codex': {'type': 'oauth', 'access': 'SECRET',
                 'refresh': 'SECRET', 'account_id': 'SECRET', 'expires_at': time.time()+3600}}))
-            for failure in [urllib.error.HTTPError(g.USAGE_URL, 401, 'SECRET', {}, None),
-                            urllib.error.HTTPError(g.USAGE_URL, 429, 'SECRET', {}, None),
+            for failure in [urllib.error.HTTPError(g.USAGE_URL, 401, 'SECRET', {}, io.BytesIO()),
+                            urllib.error.HTTPError(g.USAGE_URL, 429, 'SECRET', {}, io.BytesIO()),
                             urllib.error.URLError('SECRET'), TimeoutError('SECRET')]:
                 with patch('urllib.request.OpenerDirector.open', side_effect=failure):
                     with self.assertRaises(g.GuardError) as caught:
@@ -31,6 +31,8 @@ class FetchTests(unittest.TestCase):
                     self.assertNotIn('SECRET', str(caught.exception))
                     if getattr(failure, 'code', 0) == 401:
                         self.assertIn('strix auth login', str(caught.exception))
+                if isinstance(failure, urllib.error.HTTPError):
+                    failure.close()  # Release the synthetic response on Python 3.14 too.
             for body in [b'SECRET', b'{}', b'null', b'x' * 1048577]:
                 with patch('urllib.request.OpenerDirector.open', return_value=io.BytesIO(body)):
                     with self.assertRaises(g.GuardError):
@@ -115,13 +117,29 @@ class CliTests(unittest.TestCase):
             fetch.assert_not_called()
             run.assert_not_called()
 
+    def test_default_tui_requires_terminal_and_does_not_add_noninteractive(self):
+        g = importlib.import_module('strix_quota_guard')
+        with patch.object(g, 'fetch_usage') as fetch, patch.object(g, 'run_guard', return_value=7) as run:
+            with self.assertRaises(SystemExit) as caught:
+                g.main(['--', '-t', 'example.invalid'])
+            self.assertEqual(caught.exception.code, 2)
+            fetch.assert_not_called()
+            run.assert_not_called()
+            with patch('os.isatty', return_value=True):
+                self.assertEqual(g.main(['--', '--resume', 'run-name']), 7)
+                self.assertEqual(run.call_args.args[0], ['strix', '--resume', 'run-name'])
+                self.assertTrue(run.call_args.kwargs['interactive'])
+                for opt in ('-n', '--non-interactive'):
+                    with self.assertRaises(SystemExit):
+                        g.main(['--', opt, '-t', 'example.invalid'])
+
     def test_cli_check_is_read_only_and_command_is_headless(self):
         g = importlib.import_module('strix_quota_guard')
         with patch.object(g, 'fetch_usage', return_value=15) as fetch, patch.object(g, 'run_guard', return_value=7) as run:
             self.assertEqual(g.main(['--check']), 0)
             fetch.assert_called_once()
             run.assert_not_called()
-            self.assertEqual(g.main(['--interval', '2', '--grace', '4', '--executable', '/test/strix',
+            self.assertEqual(g.main(['--headless', '--interval', '2', '--grace', '4', '--executable', '/test/strix',
                                     '--', '--resume', 'run-name']), 7)
             self.assertEqual(run.call_args.args[0], ['/test/strix', '-n', '--resume', 'run-name'])
             self.assertEqual(run.call_args.kwargs['interval'], 2)

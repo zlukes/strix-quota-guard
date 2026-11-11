@@ -2,7 +2,7 @@
 
 **English** | [Čeština](README.cs.md)
 
-A standalone Python wrapper for **local headless Strix** that monitors your
+A standalone Python wrapper for **local Strix (fullscreen TUI by default)** that monitors your
 ChatGPT subscription's weekly quota and requests a graceful stop at **80% used**.
 Requires Python 3.9+ and macOS/Linux (POSIX). Standard library only.
 Not part of Strix or an official OpenAI integration.
@@ -49,10 +49,35 @@ argument after `--`**, not a guard mode. Resuming performs a fresh quota check;
 it will not start at >=80%. There is no automatic wait for reset or restart.
 Bare `--resume` without a name is rejected because it would require a picker.
 
-The guard always adds `-n`; interactive mode is not supported. Child stdin is
-`/dev/null`; Strix output remains in the terminal. This is not a daemon: a new
-POSIX session isolates the child's process group for signals, while the guard
-runs in the foreground. **CLI help and diagnostic messages are in English.**
+### Terminal modes
+
+The default is the usual fullscreen Strix TUI: monitoring, keyboard input, and
+window resizing work through a private POSIX PTY, including a controlling
+`/dev/tty`. The guard stays in the foreground and polls quota on a background
+thread; a slow quota request does not block keyboard input or resizing.
+All three standard streams must be real TTYs. Pipes/redirection without
+`--headless` fail clearly **before reading credentials or starting Strix**.
+`--check` does not require a terminal.
+
+For the previous non-interactive behavior, opt in before the separator:
+
+```sh
+python3 ~/strix-quota-guard/strix_quota_guard.py --headless -- -t https://example.invalid
+python3 ~/strix-quota-guard/strix_quota_guard.py --headless -- --resume RUN_NAME
+```
+
+Only `--headless` adds `-n` and uses `/dev/null` for child stdin. Do not pass
+`-n`/`--non-interactive` after `--` in default mode. Both modes preserve the
+working directory and environment. The interactive executable must be Strix
+itself (or an exec-style launcher), not a wrapper that hides the backend PID.
+
+In TUI mode, the latest quota/error diagnostic and any grace warning are
+**deferred until Strix exits** so they cannot paint over the fullscreen UI.
+There is no terminal recording or credential log. Ctrl-C requests graceful
+shutdown once; other keys go to Strix. Input is discarded once shutdown starts
+so repeated keys/signals cannot interrupt persistence. Terminal settings and
+common fullscreen modes are restored on exit (not possible after SIGKILL or
+power loss). **CLI help and diagnostic messages are in English.**
 
 ## Example: audit a local project
 
@@ -99,12 +124,14 @@ resuming. Keep `strix_runs/` and the working files intact.
 3. Find exactly one window in `rate_limit` with `limit_window_seconds == 604800`.
    Use `used_percent`, not the order or name of `primary_window`/`secondary_window`.
    Missing, ambiguous, or invalid weekly data is an error, not 0% usage.
-4. Below 80%, start `[strix, -n, ...arguments]` without a shell. By default, check
+4. Below 80%, start `[strix, ...arguments]` without a shell (add `-n` only in
+   `--headless` mode). By default, check
    again 30 seconds after the previous check completes. No automatic request
    retries. Short-term limits (such as five-hour windows) are not managed.
-5. At >=80% **or on a quota-check error**, send the child's process group one
-   `SIGINT` and wait for the main child process to exit. A preflight error prevents
-   the child from starting at all.
+5. At >=80% **or on a quota-check error**, request one graceful shutdown and
+   wait for the main child process to exit. Interactive mode sends `SIGINT` only
+   to the Python backend; headless mode sends it to the child's process group.
+   A preflight error prevents the child from starting at all.
 
 The authentication file is reread on every check to pick up tokens refreshed by
 Strix. The guard **never writes the file, refreshes tokens, or rotates them**,
@@ -121,12 +148,23 @@ urllib network operations; it is not a guaranteed end-to-end transaction deadlin
 
 ## Shutdown and limitations
 
-- Upstream headless Strix handles SIGINT/SIGTERM/SIGHUP with
-  `report_state.cleanup(status="interrupted")`, then exits. The guard forwards
-  the first user signal; repeated signals do not interrupt cleanup. An in-flight
-  HTTP request may delay signal forwarding.
-- After `--grace` seconds (default 60), the guard warns that **the process is still
-  running** and continues waiting. **It never sends SIGKILL or claims a process
+- Interactive shutdown targets the Python backend with one **SIGINT**, not its
+  process group or Go TUI sidecar. Upstream `asyncio.run` interruption unwinds
+  `GoTuiRuntime.run`: stop the sidecar, cancel preparation/state sync, cancel and
+  await the scan, close IPC; `main` then persists `report_state`. SIGTERM/SIGHUP
+  have no equivalent interactive cleanup handler, so the guard translates these
+  user signals to backend SIGINT while preserving exit codes 143/129. Ctrl-C
+  returns 130. The backend owns its descendants: the guard must not kill the
+  sidecar concurrently and race this cleanup. Upstream itself may force-kill
+  its sidecar after its own five-second termination timeout; the guard does not.
+- Headless Strix handles SIGINT/SIGTERM/SIGHUP with
+  `report_state.cleanup(status="interrupted")`, then exits. Headless mode forwards
+  the first user signal to its process group. Repeated signals are suppressed
+  in both modes. Preflight (and headless polling) can delay signal handling until
+  an in-flight HTTP request finishes; interactive polling cannot block shutdown.
+- After `--grace` seconds (default 60), the guard records a warning and continues
+  waiting. In headless mode the warning is immediate; in TUI mode it is shown
+  only after exit. Inspect from another terminal if shutdown appears stuck. **It never sends SIGKILL or claims a process
   stopped merely because a signal was sent.** Grace is a warning threshold, not
   a forced-kill deadline. If the child ignores the signal, waiting may be indefinite;
   inspect the process from another terminal.
@@ -147,7 +185,7 @@ urllib network operations; it is not a guaranteed end-to-end transaction deadlin
 |---|---|
 | 0 | `--check`: below threshold; otherwise successful Strix exit |
 | 80 | Quota >=80% before startup or during the run |
-| 81 | Authentication, usage, network, or process startup failure |
+| 81 | Authentication, usage, network, process startup, or terminal I/O failure |
 | 2 | Invalid guard arguments |
 | 130 / 143 / 129 | User SIGINT / SIGTERM / SIGHUP forwarded by the guard |
 | Other | Normal child exit code is preserved |
@@ -166,10 +204,16 @@ python3 -m unittest -v
 
 Tests use no real credentials, network calls, or real Strix. Harmless Python
 processes with real signal handlers verify cleanup on quota/error, user signals,
-waiting beyond grace, and prevention of startup after a failed preflight.
+waiting beyond grace, and prevention of startup after a failed preflight. Nested
+real PTYs verify all standard streams and `/dev/tty`, keyboard, initial/changed
+window sizes, nonblocking polling, large simultaneous input/output, terminal
+restoration, disconnects, child exits, and backend-owned sidecar cleanup. These
+are integration tests of the wrapper, **not a live Strix scan/resume test**.
 Temporary test files use Python's standard temporary directory. Set
 `STRIX_GUARD_TEST_TMPDIR` to use a custom existing directory.
 
 Implementation references upstream Strix (`strix/config/codex.py`,
-`strix/interface/cli.py`, `strix/interface/cli_args.py`), commit
+`strix/interface/cli.py`, `strix/interface/cli_args.py`,
+`strix/interface/main.py`, `strix/interface/tui/runtime.py`, and
+`strix/interface/tui/sidecar.py`), commit
 `685bbc8138d35fc9fe378ac37ec0d9198b9c46a3`.

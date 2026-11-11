@@ -2,7 +2,7 @@
 
 [English](README.md) | **Čeština**
 
-Čitelný samostatný Python skript pro **lokální headless Strix** a týdenní
+Čitelný samostatný Python skript pro **lokální Strix (výchozí fullscreen TUI)** a týdenní
 ChatGPT subscription kvótu. Python 3.9+, pouze standardní knihovna, macOS/Linux
 (POSIX). Není součástí Strix ani oficiální integrací OpenAI.
 
@@ -49,10 +49,34 @@ samostatný režim guardu. Obnovení vždy projde novou kontrolou kvóty; při >
 se znovu nespustí. Automatické čekání na reset ani automatický restart není
 implementován. Samotné `--resume` bez názvu je odmítnuto (vyžadovalo by picker).
 
-Guard vždy přidá `-n`; interaktivní režim není podporován. Standardní vstup dítěte
-je `/dev/null`; výstup Strix zůstává v terminálu. Nejde o daemon: nová POSIX session
-izoluje procesní skupinu pro signály, ale guard zůstává v popředí.
-Nápověda CLI a diagnostické hlášky skriptu jsou v angličtině.
+### Režimy terminálu
+
+Výchozí je běžné fullscreen TUI Strix: monitoring, klávesnice a změny velikosti
+okna fungují přes vlastní POSIX PTY včetně řídicího `/dev/tty`. Guard zůstává
+v popředí, kvótu kontroluje vlákno na pozadí; pomalý síťový dotaz neblokuje
+klávesnici ani změnu velikosti. Všechny tři standardní proudy musí být skutečné
+TTY. Roura nebo přesměrování bez `--headless` skončí s jasnou chybou **ještě před
+čtením credentials a spuštěním Strix**. `--check` terminál nepotřebuje.
+
+Původní neinteraktivní chování zapnete volbou před oddělovačem:
+
+```sh
+python3 ~/strix-quota-guard/strix_quota_guard.py --headless -- -t https://example.invalid
+python3 ~/strix-quota-guard/strix_quota_guard.py --headless -- --resume NAZEV_BEHU
+```
+
+Pouze `--headless` přidává `-n` a připojí vstup dítěte na `/dev/null`. Ve výchozím
+režimu nepřidávejte `-n`/`--non-interactive` za `--`. Oba režimy zachovávají
+pracovní adresář i prostředí. Interaktivní executable musí být přímo Strix
+(nebo launcher používající exec), nikoli wrapper skrývající PID backendu.
+
+V TUI se poslední údaj o kvótě/chybě i případné varování grace vypíší **až po
+skončení Strix**, aby nepřekreslovaly fullscreen rozhraní. Guard nepořizuje záznam
+terminálu ani log credentials. Ctrl-C požádá jednou o šetrné ukončení; ostatní
+klávesy dostává Strix. Po zahájení ukončování se vstup zahazuje, aby opakované
+klávesy/signály nepřerušily persistenci. Při skončení se obnoví nastavení terminálu
+a běžné fullscreen režimy (nelze po SIGKILL nebo výpadku napájení).
+**Nápověda CLI a diagnostické hlášky skriptu jsou v angličtině.**
 
 ## Příklad: audit lokálního projektu
 
@@ -96,11 +120,14 @@ Při obnovení nepřidávejte `--target`; zachovejte `strix_runs/` a pracovní s
 3. V `rate_limit` hledá právě jedno okno s `limit_window_seconds == 604800`.
    Rozhoduje `used_percent`, ne pořadí ani název `primary_window`/`secondary_window`.
    Chybějící, nejednoznačné nebo neplatné týdenní údaje znamenají chybu, ne 0 %.
-4. Pod 80 % spustí `[strix, -n, ...argumenty]` bez shellu. Výchozí kontrola je
+4. Pod 80 % spustí `[strix, ...argumenty]` bez shellu (`-n` přidá jen v režimu
+   `--headless`). Výchozí kontrola je
    každých 30 s po dokončení předchozí kontroly; žádný request se neopakuje
    automaticky. Krátkodobé limity (např. 5 hodin) tento guard neřídí.
-5. Při >=80 % **nebo při chybě kontroly** pošle skupině dítěte jednou `SIGINT`
-   a čeká na skončení hlavního procesu. Při předběžné chybě dítě vůbec nespustí.
+5. Při >=80 % **nebo při chybě kontroly** požádá jednou o šetrné ukončení
+   a čeká na skončení hlavního procesu. Interaktivně posílá `SIGINT` pouze Python
+   backendu; v headless režimu celé skupině dítěte. Při předběžné chybě dítě vůbec
+   nespustí.
 
 Auth soubor se při každém dotazu čte znovu, aby se převzaly tokeny obnovené
 samotným Strix. Guard jej **nikdy nezapisuje, neprovádí refresh ani rotaci tokenů**
@@ -117,11 +144,22 @@ urllib, nikoli garantovaný celkový deadline celé transakce.
 
 ## Ukončování a omezení
 
-- Upstream headless Strix obsluhuje SIGINT/SIGTERM/SIGHUP přes
-  `report_state.cleanup(status="interrupted")`, pak ukončí proces. Guard posílá
-  odpovídající první uživatelský signál dál; opakované signály už nepřerušují cleanup.
-  Během rozpracovaného HTTP dotazu může být předání signálu zpožděno.
-- Po `--grace` sekundách (výchozí 60) vypíše **„process is still running“** (proces stále běží) a dál čeká.
+- Interaktivní ukončení posílá jeden **SIGINT Python backendu**, nikoli celé
+  skupině nebo Go TUI sidecaru. Přerušení upstream `asyncio.run` rozvine cleanup
+  v `GoTuiRuntime.run`: ukončení sidecaru, zrušení přípravy/synchronizace, zrušení
+  a vyčkání scanu, zavření IPC; `main` poté uloží `report_state`. Pro SIGTERM/SIGHUP
+  nemá interaktivní backend ekvivalentní handler, proto je guard překládá na
+  SIGINT a zachová návratové kódy 143/129. Ctrl-C vrací 130. Potomky uklízí backend;
+  guard nesmí souběžně zabít sidecar a závodit s cleanupem. Upstream sám může
+  sidecar nuceně zabít po svém pětisekundovém timeoutu; guard to nedělá.
+- Headless Strix obsluhuje SIGINT/SIGTERM/SIGHUP přes
+  `report_state.cleanup(status="interrupted")`, pak ukončí proces. Headless guard
+  předává první uživatelský signál celé skupině dítěte. Opakované signály se v obou
+  režimech potlačují. Preflight a headless polling mohou čekat na probíhající HTTP
+  dotaz; interaktivní polling ukončení neblokuje.
+- Po `--grace` sekundách (výchozí 60) zaznamená varování a dál čeká. V headless
+  režimu varuje ihned, v TUI až po skončení. Pokud ukončování zdánlivě stojí,
+  zkontrolujte proces z jiného terminálu.
   **Nikdy neposílá SIGKILL a nikdy nehlásí zastavení pouze proto, že poslal signál.**
   Grace je lhůta pro varování, ne nucené zabití. Pokud dítě ignoruje signál, může
   guard čekat neomezeně; stav je nutné zkontrolovat z jiného terminálu.
@@ -142,7 +180,7 @@ urllib, nikoli garantovaný celkový deadline celé transakce.
 |---|---|
 | 0 | `--check`: pod limitem; jinak úspěšný návrat Strix |
 | 80 | Kvóta >=80 % před startem nebo během běhu |
-| 81 | Auth / usage / síť / spuštění procesu selhalo |
+| 81 | Auth / usage / síť / spuštění procesu / terminálové I/O selhalo |
 | 2 | Neplatné argumenty guardu |
 | 130 / 143 / 129 | Uživatelský SIGINT / SIGTERM / SIGHUP předaný guardem |
 | ostatní | Běžný návratový kód dítěte je zachován |
@@ -162,9 +200,15 @@ python3 -m unittest -v
 Testy nepoužívají skutečné credentials, síť ani skutečný Strix. Spouštějí neškodné
 Python procesy s reálnými signal handlery: ověřují cleanup při kvótě a chybě,
 uživatelské signály, čekání po grace a zamezení spuštění při selhání preflightu.
+Vnořené skutečné PTY ověřují všechny standardní proudy a `/dev/tty`, klávesnici,
+počáteční i změněné rozměry okna, neblokující polling, velký souběžný vstup/výstup,
+obnovení terminálu, odpojení, návratové kódy a cleanup sidecaru řízený backendem.
+Jde o integrační testy wrapperu, **nikoli živý test scanu/obnovení ve Strix**.
 Dočasné soubory testů používají standardní dočasný adresář Pythonu.
 Vlastní existující adresář lze zvolit přes `STRIX_GUARD_TEST_TMPDIR`.
 
 Implementace vychází z upstream Strix (`strix/config/codex.py`,
-`strix/interface/cli.py`, `strix/interface/cli_args.py`), commit
+`strix/interface/cli.py`, `strix/interface/cli_args.py`,
+`strix/interface/main.py`, `strix/interface/tui/runtime.py` a
+`strix/interface/tui/sidecar.py`), commit
 `685bbc8138d35fc9fe378ac37ec0d9198b9c46a3`.
