@@ -1,61 +1,67 @@
 # Strix quota guard
 
-Čitelný samostatný Python skript pro **lokální headless Strix** a týdenní
-ChatGPT subscription kvótu. Python 3.9+, pouze standardní knihovna, macOS/Linux
-(POSIX). Není součástí Strix ani oficiální integrací OpenAI.
+**English** | [Čeština](README.cs.md)
 
-## Instalace
+A standalone Python wrapper for **local headless Strix** that monitors your
+ChatGPT subscription's weekly quota and requests a graceful stop at **80% used**.
+Requires Python 3.9+ and macOS/Linux (POSIX). Standard library only.
+Not part of Strix or an official OpenAI integration.
+
+## Installation
 
 ```sh
 git clone https://github.com/zlukes/strix-quota-guard.git ~/strix-quota-guard
 ```
 
-Nejsou potřeba žádné pip balíčky. Strix musí být nainstalovaný samostatně.
-Pokud adresář již existuje, nepřepisujte jej; použijte jinou cestu nebo aktualizujte existující clone.
+No pip packages are required. Install Strix separately. If the directory already
+exists, do not overwrite it: use another path or update the existing clone.
 
-## Použití
+## Usage
 
-Strix musí být již nainstalovaný a přihlášený přes `strix auth login chatgpt`.
-V jeho konfiguraci používejte subscription model `chatgpt/<váš-model>`, nikoli
-placený API model. Guard konfiguraci modelů nemění, žádný fallback na placené
-API neimplementuje a neumí kontrolovat náklady jiných providerů. Vlastní
-`--executable` musí být důvěryhodná kompatibilní instalace Strix používající
-stejný HOME a auth soubor, nikoli launcher přepínající uživatele/profil.
+Sign in using `strix auth login chatgpt` and configure a subscription model
+(`chatgpt/<your-model>`), not a paid API model. The guard does not change model
+configuration, implement a paid API fallback, or monitor other providers' costs.
+A custom `--executable` must be a trusted, compatible Strix installation using
+the same HOME and authentication file, not a launcher switching users/profiles.
 
 ```sh
 python3 ~/strix-quota-guard/strix_quota_guard.py --help
 
-# Jen jednorázové čtení kvóty, bez spuštění Strix:
+# Read quota once without starting Strix:
 python3 ~/strix-quota-guard/strix_quota_guard.py --check
 
-# Spouštějte ze svého pracovního adresáře, kde chcete mít strix_runs/.
-# Testujte pouze cíle, pro které máte oprávnění.
+# Run from the working directory where strix_runs/ should be stored.
+# Only test targets you are authorized to assess.
 python3 ~/strix-quota-guard/strix_quota_guard.py -- -t https://example.invalid
 
-# Volitelné intervaly v sekundách a konkrétní instalace Strix:
+# Optional timing settings (seconds) and executable path:
 python3 ~/strix-quota-guard/strix_quota_guard.py \
-  --interval 15 --timeout 10 --grace 60 --executable /cesta/ke/strix \
+  --interval 15 --timeout 10 --grace 60 --executable /path/to/strix \
   -- -t https://example.invalid
 
-# Později, ze STEJNÉHO pracovního adresáře, po uvolnění kvóty:
-python3 ~/strix-quota-guard/strix_quota_guard.py -- --resume NAZEV_BEHU
+# After quota becomes available, resume from the SAME working directory:
+python3 ~/strix-quota-guard/strix_quota_guard.py -- --resume RUN_NAME
 ```
 
-`NAZEV_BEHU` je existující adresář v `./strix_runs/`. Guard zachovává pracovní
-adresář, stav nepřesouvá ani nemaže. `--resume` je argument **Strix za `--`**, ne
-samostatný režim guardu. Obnovení vždy projde novou kontrolou kvóty; při >=80 %
-se znovu nespustí. Automatické čekání na reset ani automatický restart není
-implementován. Samotné `--resume` bez názvu je odmítnuto (vyžadovalo by picker).
+`RUN_NAME` is an existing run directory under `./strix_runs/`. The guard preserves
+the working directory and does not move or delete state. `--resume` is a **Strix
+argument after `--`**, not a guard mode. Resuming performs a fresh quota check;
+it will not start at >=80%. There is no automatic wait for reset or restart.
+Bare `--resume` without a name is rejected because it would require a picker.
 
-Guard vždy přidá `-n`; interaktivní režim není podporován. Standardní vstup dítěte
-je `/dev/null`; výstup Strix zůstává v terminálu. Nejde o daemon: nová POSIX session
-izoluje procesní skupinu pro signály, ale guard zůstává v popředí.
+The guard always adds `-n`; interactive mode is not supported. Child stdin is
+`/dev/null`; Strix output remains in the terminal. This is not a daemon: a new
+POSIX session isolates the child's process group for signals, while the guard
+runs in the foreground. **The CLI's help and diagnostic messages are currently
+in Czech; this English README does not change the CLI language.**
 
-## Příklad: audit lokálního projektu
+## Example: audit a local project
 
-Následující příkaz spusťte v adresáři auditovaného projektu. Proměnné prostředí
-se předají Strixu beze změny. Modely jsou příkladem konkrétní konfigurace;
-jejich dostupnost závisí na vašem účtu a verzi Strix.
+Run this command from the project directory. Environment variables are passed
+to Strix unchanged. The model names illustrate one configuration; availability
+depends on your account and Strix version. The original audit instruction below
+explicitly requests Czech findings and reports; change that language request if
+needed.
 
 ```sh
 STRIX_LLM="chatgpt/gpt-6.1-sol" \
@@ -66,11 +72,11 @@ python3 ~/strix-quota-guard/strix_quota_guard.py -- \
 --instruction "I own this repository and authorize a security audit of its source code and isolated local test deployment. Review the code for vulnerabilities, validate only with non-destructive local tests using synthetic data, and recommend fixes. Production systems, external hosts, third-party services, real credentials, and real user data are out of scope. Report affected files and lines, evidence, impact, and remediation. Distinguish confirmed findings from hypotheses. Communicate with me in Czech and write all findings, explanations, and the final report in Czech. Preserve code, commands, file paths, and identifiers in their original form."
 ```
 
-`--scan-mode quick` uvádějte pouze jednou a měňte podle potřeby.
-Vše za oddělovačem `--` jsou argumenty Strixu, před ním volby hlídače.
-Instrukce vymezují povolený rozsah, ale nenahrazují síťovou a datovou izolaci testovacího prostředí.
+Specify `--scan-mode quick` only once and change it as needed. Everything after
+`--` belongs to Strix; guard options go before it. Instructions define the
+authorized scope but do not replace network and data isolation of the test environment.
 
-Po uvolnění týdenní kvóty pokračujte ze stejného pracovního adresáře:
+Once weekly quota is available, resume from the same working directory:
 
 ```sh
 STRIX_LLM="chatgpt/gpt-6.1-sol" \
@@ -80,88 +86,91 @@ python3 ~/strix-quota-guard/strix_quota_guard.py -- \
 --resume NAZEV_BEHU
 ```
 
-Při obnovení nepřidávejte `--target`; zachovejte `strix_runs/` a pracovní soubory.
+Replace `NAZEV_BEHU` with the existing run name. Do not add `--target` when
+resuming. Keep `strix_runs/` and the working files intact.
 
-## Jak funguje
+## How it works
 
-1. Před spuštěním Strix načte `~/.strix/subscription-auth.json` a provede pouze
+1. Before starting Strix, read `~/.strix/subscription-auth.json` and perform only
    `GET https://chatgpt.com/backend-api/wham/usage`.
-2. Použije Strix formát `{"codex": {"type": "oauth", "access": "…",
+2. Use the Strix schema `{"codex": {"type": "oauth", "access": "…",
    "refresh": "…", "account_id": "…", "expires_at": 1234567890}}`.
-   `expires_at` jsou Unix sekundy. Posílá `Authorization: Bearer …` a
-   `ChatGPT-Account-Id`. Refresh je pouze ověřen jako přítomný, nikam se neposílá.
-3. V `rate_limit` hledá právě jedno okno s `limit_window_seconds == 604800`.
-   Rozhoduje `used_percent`, ne pořadí ani název `primary_window`/`secondary_window`.
-   Chybějící, nejednoznačné nebo neplatné týdenní údaje znamenají chybu, ne 0 %.
-4. Pod 80 % spustí `[strix, -n, ...argumenty]` bez shellu. Výchozí kontrola je
-   každých 30 s po dokončení předchozí kontroly; žádný request se neopakuje
-   automaticky. Krátkodobé limity (např. 5 hodin) tento guard neřídí.
-5. Při >=80 % **nebo při chybě kontroly** pošle skupině dítěte jednou `SIGINT`
-   a čeká na skončení hlavního procesu. Při předběžné chybě dítě vůbec nespustí.
+   `expires_at` is Unix time in seconds. Send `Authorization: Bearer <token>` and
+   `ChatGPT-Account-Id`. Check that the refresh token exists, but never send it.
+3. Find exactly one window in `rate_limit` with `limit_window_seconds == 604800`.
+   Use `used_percent`, not the order or name of `primary_window`/`secondary_window`.
+   Missing, ambiguous, or invalid weekly data is an error, not 0% usage.
+4. Below 80%, start `[strix, -n, ...arguments]` without a shell. By default, check
+   again 30 seconds after the previous check completes. No automatic request
+   retries. Short-term limits (such as five-hour windows) are not managed.
+5. At >=80% **or on a quota-check error**, send the child's process group one
+   `SIGINT` and wait for the main child process to exit. A preflight error prevents
+   the child from starting at all.
 
-Auth soubor se při každém dotazu čte znovu, aby se převzaly tokeny obnovené
-samotným Strix. Guard jej **nikdy nezapisuje, neprovádí refresh ani rotaci tokenů**
-(zamezení závodu o jednorázový refresh token). Expirace včetně bezpečnostní rezervy
-`--timeout`, HTTP 401 nebo neplatný auth soubor vedou k bezpečnému zastavení.
-Po skončení běhu obnovte přihlášení přes `strix auth login chatgpt` a spusťte guard znovu.
-Nikdy nevkládejte token do argumentů ani logů.
+The authentication file is reread on every check to pick up tokens refreshed by
+Strix. The guard **never writes the file, refreshes tokens, or rotates them**,
+preventing races over a single-use refresh token. Expiry (including a `--timeout`
+safety margin), HTTP 401, or an invalid auth file causes a fail-closed stop.
+After the run exits, sign in again with `strix auth login chatgpt` and rerun the
+guard. Never put tokens in command arguments or logs.
 
-Přesměrování HTTP se odmítá, endpoint nejde přepnout volbou CLI. TLS ověření
-zůstává zapnuté. Běžné proxy nastavení prostředí respektuje Python urllib.
-Chybové odpovědi, tokeny, account ID ani text síťových výjimek se nelogují.
-Maximální přijatá odpověď usage je 1 MiB. `--timeout` je timeout síťových operací
-urllib, nikoli garantovaný celkový deadline celé transakce.
+HTTP redirects are rejected and the endpoint cannot be changed through the CLI.
+TLS verification remains enabled. Python urllib respects normal proxy environment
+settings. Error response bodies, tokens, account IDs, and network exception text
+are not logged. Usage responses are limited to 1 MiB. `--timeout` applies to
+urllib network operations; it is not a guaranteed end-to-end transaction deadline.
 
-## Ukončování a omezení
+## Shutdown and limitations
 
-- Upstream headless Strix obsluhuje SIGINT/SIGTERM/SIGHUP přes
-  `report_state.cleanup(status="interrupted")`, pak ukončí proces. Guard posílá
-  odpovídající první uživatelský signál dál; opakované signály už nepřerušují cleanup.
-  Během rozpracovaného HTTP dotazu může být předání signálu zpožděno.
-- Po `--grace` sekundách (výchozí 60) vypíše **„proces stále běží“** a dál čeká.
-  **Nikdy neposílá SIGKILL a nikdy nehlásí zastavení pouze proto, že poslal signál.**
-  Grace je lhůta pro varování, ne nucené zabití. Pokud dítě ignoruje signál, může
-  guard čekat neomezeně; stav je nutné zkontrolovat z jiného terminálu.
-- Sleduje skončení hlavního procesu, nikoli důkaz zastavení všech vzdálených úloh,
-  kontejnerů či potomků, kteří opustili jeho procesní skupinu. Persistenci řídí
-  Strix; při zásahu velmi brzy po startu ještě nemusí existovat obnovitelný stav.
-- **80 % není tvrdá garance.** Mezi kontrolami, během probíhajících požadavků,
-  zpoždění backendu a cleanupu může spotřeba narůst. Ostatní procesy na stejném
-  účtu tento guard nezastaví. Pro větší rezervu zkraťte interval a sledujte účet.
-- Interní endpoint a formát usage nejsou stabilní veřejné API. Autentizace byla
-  ověřena čtením upstream zdrojového kódu, **nikoli živým ověřením u OpenAI**.
-  Testy používají syntetické odpovědi, nikoliv důkaz dostupnosti či oprávnění
-  endpointu pro konkrétní účet. Změna schématu vede k zastavení.
+- Upstream headless Strix handles SIGINT/SIGTERM/SIGHUP with
+  `report_state.cleanup(status="interrupted")`, then exits. The guard forwards
+  the first user signal; repeated signals do not interrupt cleanup. An in-flight
+  HTTP request may delay signal forwarding.
+- After `--grace` seconds (default 60), the guard warns that **the process is still
+  running** and continues waiting. **It never sends SIGKILL or claims a process
+  stopped merely because a signal was sent.** Grace is a warning threshold, not
+  a forced-kill deadline. If the child ignores the signal, waiting may be indefinite;
+  inspect the process from another terminal.
+- It observes the main child's exit, not proof that every remote task, container,
+  or descendant that left its process group has stopped. Strix owns persistence;
+  stopping very early may leave no resumable state.
+- **80% is not a hard cap.** Usage can increase between checks, during in-flight
+  requests, backend reporting delays, and cleanup. Other processes using the same
+  account are not stopped. For more margin, shorten the interval and monitor usage.
+- The internal endpoint and response schema are not a stable public API. Auth
+  compatibility was checked against upstream source, **not live against OpenAI**.
+  Tests use synthetic responses and do not establish endpoint availability or
+  account permissions. Schema changes cause a fail-closed stop.
 
-## Návratové kódy
+## Exit codes
 
-| Kód | Význam |
+| Code | Meaning |
 |---|---|
-| 0 | `--check`: pod limitem; jinak úspěšný návrat Strix |
-| 80 | Kvóta >=80 % před startem nebo během běhu |
-| 81 | Auth / usage / síť / spuštění procesu selhalo |
-| 2 | Neplatné argumenty guardu |
-| 130 / 143 / 129 | Uživatelský SIGINT / SIGTERM / SIGHUP předaný guardem |
-| ostatní | Běžný návratový kód dítěte je zachován |
+| 0 | `--check`: below threshold; otherwise successful Strix exit |
+| 80 | Quota >=80% before startup or during the run |
+| 81 | Authentication, usage, network, or process startup failure |
+| 2 | Invalid guard arguments |
+| 130 / 143 / 129 | User SIGINT / SIGTERM / SIGHUP forwarded by the guard |
+| Other | Normal child exit code is preserved |
 
-Kódy 80/81 jsou zvolené kódy guardu; pokud je vrátí samo dítě, nelze je pouze
-podle exit statusu rozlišit. Guard nemění význam exit statusů Strix, například
-jeho kódu 2 pro nálezy. Pokud dítě skončí signálem samo, použije se shellová
-konvence `128 + číslo signálu`.
+80/81 are guard-specific codes, but a child returning the same code cannot be
+distinguished by exit status alone. The guard does not reinterpret Strix exit
+codes, such as its code 2 for findings. If the child independently exits from a
+signal, the shell convention `128 + signal number` is used.
 
-## Testy a dohledatelnost
+## Tests and provenance
 
 ```sh
 cd ~/strix-quota-guard
 python3 -m unittest -v
 ```
 
-Testy nepoužívají skutečné credentials, síť ani skutečný Strix. Spouštějí neškodné
-Python procesy s reálnými signal handlery: ověřují cleanup při kvótě a chybě,
-uživatelské signály, čekání po grace a zamezení spuštění při selhání preflightu.
-Dočasné soubory testů používají standardní dočasný adresář Pythonu.
-Vlastní existující adresář lze zvolit přes `STRIX_GUARD_TEST_TMPDIR`.
+Tests use no real credentials, network calls, or real Strix. Harmless Python
+processes with real signal handlers verify cleanup on quota/error, user signals,
+waiting beyond grace, and prevention of startup after a failed preflight.
+Temporary test files use Python's standard temporary directory. Set
+`STRIX_GUARD_TEST_TMPDIR` to use a custom existing directory.
 
-Implementace vychází z upstream Strix (`strix/config/codex.py`,
+Implementation references upstream Strix (`strix/config/codex.py`,
 `strix/interface/cli.py`, `strix/interface/cli_args.py`), commit
 `685bbc8138d35fc9fe378ac37ec0d9198b9c46a3`.
