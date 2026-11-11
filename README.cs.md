@@ -52,6 +52,7 @@ implementován. Samotné `--resume` bez názvu je odmítnuto (vyžadovalo by pic
 Guard vždy přidá `-n`; interaktivní režim není podporován. Standardní vstup dítěte
 je `/dev/null`; výstup Strix zůstává v terminálu. Nejde o daemon: nová POSIX session
 izoluje procesní skupinu pro signály, ale guard zůstává v popředí.
+Nápověda CLI a diagnostické hlášky skriptu jsou v angličtině.
 
 ## Příklad: audit lokálního projektu
 
@@ -120,7 +121,7 @@ urllib, nikoli garantovaný celkový deadline celé transakce.
   `report_state.cleanup(status="interrupted")`, pak ukončí proces. Guard posílá
   odpovídající první uživatelský signál dál; opakované signály už nepřerušují cleanup.
   Během rozpracovaného HTTP dotazu může být předání signálu zpožděno.
-- Po `--grace` sekundách (výchozí 60) vypíše **„proces stále běží“** a dál čeká.
+- Po `--grace` sekundách (výchozí 60) vypíše **„process is still running“** (proces stále běží) a dál čeká.
   **Nikdy neposílá SIGKILL a nikdy nehlásí zastavení pouze proto, že poslal signál.**
   Grace je lhůta pro varování, ne nucené zabití. Pokud dítě ignoruje signál, může
   guard čekat neomezeně; stav je nutné zkontrolovat z jiného terminálu.

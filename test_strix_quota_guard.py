@@ -208,7 +208,7 @@ class RunTests(unittest.TestCase):
             self.assertEqual(g.run_guard([sys.executable, '-c', child], usage,
                 interval=.02, grace=.01, output=output), 80)
             self.assertTrue(cleaned.exists())
-            self.assertIn('stále běží', output.getvalue())
+            self.assertIn('process is still running', output.getvalue())
 
     def test_threshold_and_poll_error_send_sigint_and_wait_for_real_cleanup(self):
         g = importlib.import_module('strix_quota_guard')

@@ -52,8 +52,7 @@ Bare `--resume` without a name is rejected because it would require a picker.
 The guard always adds `-n`; interactive mode is not supported. Child stdin is
 `/dev/null`; Strix output remains in the terminal. This is not a daemon: a new
 POSIX session isolates the child's process group for signals, while the guard
-runs in the foreground. **The CLI's help and diagnostic messages are currently
-in Czech; this English README does not change the CLI language.**
+runs in the foreground. **CLI help and diagnostic messages are in English.**
 
 ## Example: audit a local project
 

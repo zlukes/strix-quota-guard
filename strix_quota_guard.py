@@ -36,7 +36,7 @@ def run_guard(command, usage, interval=30, grace=60, output=None):
     try:
         try:
             used = usage()
-            print('Týdenní využití: %g %%' % used, file=output, flush=True)
+            print('Weekly usage: %g %%' % used, file=output, flush=True)
             if requested:
                 return 128 + requested[0]
             if used >= 80:
@@ -47,7 +47,7 @@ def run_guard(command, usage, interval=30, grace=60, output=None):
         try:
             child = subprocess.Popen(command, start_new_session=True, stdin=subprocess.DEVNULL)
         except OSError:
-            print('Nelze spustit Strix; ověřte --executable a oprávnění.', file=output, flush=True)
+            print('Cannot start Strix; check --executable and permissions.', file=output, flush=True)
             return ERROR_EXIT
         next_poll = time.monotonic() + interval
         status = None
@@ -64,7 +64,7 @@ def run_guard(command, usage, interval=30, grace=60, output=None):
                 continue
             try:
                 used = usage()
-                print('Týdenní využití: %g %%' % used, file=output, flush=True)
+                print('Weekly usage: %g %%' % used, file=output, flush=True)
                 if used >= 80:
                     status = QUOTA_EXIT
             except GuardError as exc:
@@ -86,7 +86,7 @@ def run_guard(command, usage, interval=30, grace=60, output=None):
         try:
             child.wait(timeout=grace)
         except subprocess.TimeoutExpired:
-            print('VAROVÁNÍ: proces stále běží; SIGKILL neposílám, čekám na ukončení.',
+            print('WARNING: process is still running; not sending SIGKILL, waiting for shutdown.',
                   file=output, flush=True)
             child.wait()
         return status
@@ -114,9 +114,9 @@ def fetch_usage(auth_path=AUTH_PATH, timeout=10, opener=None):
         if type(expires) not in (int, float) or not math.isfinite(expires):
             raise ValueError()
     except (OSError, ValueError, UnicodeError, OverflowError):
-        raise GuardError('Neplatný auth soubor Strix. Spusťte strix auth login a guard znovu.') from None
+        raise GuardError('Invalid Strix auth file. Run strix auth login chatgpt, then restart the guard.') from None
     if expires <= time.time() + timeout:
-        raise GuardError('Token expiroval nebo brzy expiruje. Spusťte strix auth login a guard znovu.')
+        raise GuardError('Token has expired or will expire soon. Run strix auth login chatgpt, then restart the guard.')
     request = urllib.request.Request(USAGE_URL, headers={
         'Authorization': 'Bearer ' + record['access'],
         'ChatGPT-Account-Id': record['account_id'],
@@ -127,19 +127,19 @@ def fetch_usage(auth_path=AUTH_PATH, timeout=10, opener=None):
         with opener.open(request, timeout=timeout) as response:
             body = response.read(1048577)
         if len(body) > 1048576:
-            raise GuardError('Příliš velká odpověď usage.')
+            raise GuardError('Usage response is too large.')
         return weekly_percent(json.loads(body))
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
-            raise GuardError('HTTP 401: spusťte strix auth login a guard znovu.') from None
-        raise GuardError('Usage HTTP chyba; běh není bezpečně hlídán.') from None
+            raise GuardError('HTTP 401: run strix auth login chatgpt, then restart the guard.') from None
+        raise GuardError('Usage HTTP error; the run cannot be safely monitored.') from None
     except (OSError, ValueError, UnicodeError, http.client.HTTPException):
-        raise GuardError('Usage nelze načíst (síť nebo neplatný JSON).') from None
+        raise GuardError('Cannot read usage (network error or invalid JSON).') from None
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise GuardError('Přesměrování usage odmítnuto; token neopustí pevný endpoint.')
+        raise GuardError('Usage redirect rejected; the token will not leave the fixed endpoint.')
 
 
 class GuardError(Exception):
@@ -149,49 +149,49 @@ class GuardError(Exception):
 def weekly_percent(data):
     limits = data.get('rate_limit') if isinstance(data, dict) else None
     if not isinstance(limits, dict):
-        raise GuardError('Chybí rate_limit v odpovědi usage.')
+        raise GuardError('Usage response is missing rate_limit.')
     windows = [w for w in limits.values() if isinstance(w, dict)
                and w.get('limit_window_seconds') == 604800]
     if len(windows) != 1:
-        raise GuardError('Chybí jednoznačné týdenní okno (604800 sekund).')
+        raise GuardError('Missing or ambiguous weekly window (604800 seconds).')
     used = windows[0].get('used_percent')
     if type(used) not in (int, float) or not 0 <= used <= 100:
-        raise GuardError('Neplatné týdenní used_percent.')
+        raise GuardError('Invalid weekly used_percent.')
     return used
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Strix: hlídání týdenní ChatGPT kvóty na 80 %.')
-    parser.add_argument('--check', action='store_true', help='Jen načíst usage; nespouštět Strix.')
-    parser.add_argument('--interval', type=float, default=30, help='Interval kontrol v sekundách (30).')
-    parser.add_argument('--grace', type=float, default=60, help='Počet sekund do varování při ukončování (60).')
-    parser.add_argument('--timeout', type=float, default=10, help='Síťový timeout v sekundách (10).')
-    parser.add_argument('--executable', default='strix', help='Cesta k důvěryhodnému Strix executable.')
-    parser.add_argument('strix_args', nargs=argparse.REMAINDER, help='Argumenty Strix za --.')
+    parser = argparse.ArgumentParser(description='Strix: stop at 80% of the weekly ChatGPT quota.')
+    parser.add_argument('--check', action='store_true', help='Read usage only; do not start Strix.')
+    parser.add_argument('--interval', type=float, default=30, help='Polling interval in seconds (30).')
+    parser.add_argument('--grace', type=float, default=60, help='Seconds before a shutdown warning (60).')
+    parser.add_argument('--timeout', type=float, default=10, help='Network timeout in seconds (10).')
+    parser.add_argument('--executable', default='strix', help='Path to a trusted Strix executable.')
+    parser.add_argument('strix_args', nargs=argparse.REMAINDER, help='Strix arguments after --.')
     args = parser.parse_args(argv)
     forwarded = args.strix_args
     for name in ('interval', 'grace', 'timeout'):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
-            parser.error('--%s musí být konečné kladné číslo.' % name)
+            parser.error('--%s must be a finite positive number.' % name)
     if args.check and forwarded:
-        parser.error('--check nepřijímá argumenty Strix.')
+        parser.error('--check does not accept Strix arguments.')
     if not args.check and (not forwarded or forwarded[0] != '--' or len(forwarded) < 2):
-        parser.error('Argumenty Strix zadejte za --; například -- -t https://example.invalid')
+        parser.error('Provide Strix arguments after --; for example -- -t https://example.invalid')
     if forwarded:
         forwarded = forwarded[1:]
     for index, arg in enumerate(forwarded):
         if arg.split('=', 1)[0] in ('--interactive', '--no-non-interactive', '--tui'):
-            parser.error('Interaktivní režim není podporován; guard vždy přidává -n.')
+            parser.error('Interactive mode is not supported; the guard always adds -n.')
         if arg in ('--resume', '-r') and (index + 1 == len(forwarded)
                 or forwarded[index + 1].startswith('-')):
-            parser.error('--resume vyžaduje název běhu.')
+            parser.error('--resume requires a run name.')
     def usage():
         return fetch_usage(timeout=args.timeout)
     if args.check:
         try:
             used = usage()
-            print('Týdenní využití: %g %%' % used)
+            print('Weekly usage: %g %%' % used)
             return QUOTA_EXIT if used >= 80 else 0
         except GuardError as exc:
             print(str(exc), file=sys.stderr)
